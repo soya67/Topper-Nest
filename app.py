@@ -8,11 +8,16 @@ Run:
     streamlit run app.py
 """
 import ast
+import base64
+import hashlib
+import hmac
 import html
 import json
 import math
 import operator
 import os
+import re
+import shutil
 import sqlite3
 import time
 from datetime import date, datetime, timedelta
@@ -21,9 +26,9 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-DB_FILE = "topper_nest.db"
-FILES_DIR = Path("saved_files")
-SONGS_DIR = Path("songs")
+LEGACY_DB = "topper_nest.db"  # data saved before accounts existed
+USERS_DB = "users.db"  # login details of every account
+DATA_DIR = Path("users_data")  # one private folder per account
 MODEL = "claude-sonnet-5-5"  # change here if you want another model
 DEFAULT_DAILY_LIMIT = 30  # AI messages per day (keeps API cost under control)
 IDLE_CAP = 300  # seconds; long idle gaps are not counted as study time
@@ -31,7 +36,7 @@ IDLE_CAP = 300  # seconds; long idle gaps are not counted as study time
 PAGES = [
     "Home", "Syllabus", "Planner", "Practice", "Mistakes", "Notes",
     "AI Tutor", "English Coach", "Study Videos", "Music", "Files",
-    "Calculator", "Usage Stats",
+    "Calculator", "Usage Stats", "Profile",
 ]
 STATUSES = ["Not started", "Studying", "Done"]
 QTYPES = ["Objective (MCQ)", "Numerical", "Subjective"]
@@ -39,8 +44,43 @@ DIFFS = ["Easy", "Medium", "Hard", "Trap"]
 
 
 # ====================== database helpers ======================
+def user_dir():
+    d = DATA_DIR / st.session_state["user"]
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def files_dir():
+    d = user_dir() / "saved_files"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def songs_dir():
+    d = user_dir() / "songs"
+    d.mkdir(exist_ok=True)
+    return d
+
+
 def db():
-    return sqlite3.connect(DB_FILE)
+    return sqlite3.connect(user_dir() / "topper_nest.db")
+
+
+def urun(sql, params=()):
+    c = sqlite3.connect(USERS_DB)
+    try:
+        with c:
+            c.execute(sql, params)
+    finally:
+        c.close()
+
+
+def urows(sql, params=()):
+    c = sqlite3.connect(USERS_DB)
+    try:
+        return c.execute(sql, params).fetchall()
+    finally:
+        c.close()
 
 
 def run(sql, params=()):
@@ -65,8 +105,8 @@ def now_text():
 
 
 def init_db():
-    FILES_DIR.mkdir(exist_ok=True)
-    SONGS_DIR.mkdir(exist_ok=True)
+    files_dir()
+    songs_dir()
     statements = [
         """CREATE TABLE IF NOT EXISTS notes(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -304,6 +344,17 @@ button[data-baseweb="tab"][aria-selected="true"]{color:#2f8f46}
 [data-testid="stProgress"] [role="progressbar"]>div,div[data-baseweb="progress-bar"]>div>div{background-image:linear-gradient(90deg,#2f8f46,#7fd69a) !important;border-radius:10px}
 ::-webkit-scrollbar{width:9px}
 ::-webkit-scrollbar-thumb{background:linear-gradient(#2f8f46,#7fd69a);border-radius:9px}
+.chip{display:flex;align-items:center;gap:12px;padding:10px 12px;margin-bottom:14px;border-radius:16px;color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.chip .av{width:40px;height:40px;border-radius:50%;object-fit:cover;display:grid;place-items:center;flex:none;font-weight:800;color:#0a2e1f;background-image:linear-gradient(135deg,#9ee6b4,#d9f5e3)}
+.chip .nm{font-weight:700;line-height:1.15;color:#fff}
+.chip small{display:block;opacity:.7;font-weight:500;color:#fff}
+.bigav{width:150px;height:150px;border-radius:50%;display:grid;place-items:center;font-size:3.4rem;font-weight:800;color:#fff;background-image:linear-gradient(135deg,#2f8f46,#0f3d2a);box-shadow:0 14px 34px rgba(15,61,42,.3),inset 0 1px 0 rgba(255,255,255,.35)}
+.st-key-avatarbox img{border-radius:50%;aspect-ratio:1;object-fit:cover}
+.login-head{text-align:center;margin:0 0 18px;animation:glassIn .6s ease backwards}
+.login-head .logo{width:54px;height:54px;border-radius:16px;margin:0 auto 14px;background-image:linear-gradient(135deg,#9ee6b4,#2f8f46);box-shadow:0 12px 28px rgba(47,143,70,.4),inset 0 1px 0 rgba(255,255,255,.5)}
+.login-head .lt{font-size:2.2rem;font-weight:800;letter-spacing:-.03em;line-height:1.15;color:var(--ink)}
+.login-head .grad2{background-image:linear-gradient(90deg,#0a2e1f,#2f8f46);-webkit-background-clip:text;background-clip:text;color:transparent}
+.login-head .ls{opacity:.7;margin-top:6px}
 """
 
 
@@ -354,6 +405,235 @@ def show_flash():
         st.toast(f[0])
 
 
+# ====================== accounts and profile ======================
+PW_ROUNDS = 200_000
+
+
+def init_users():
+    urun(
+        """CREATE TABLE IF NOT EXISTS users(
+            username TEXT PRIMARY KEY, salt TEXT, pw_hash TEXT,
+            name TEXT, college TEXT, course TEXT, semester TEXT,
+            goal_hours REAL DEFAULT 2, about TEXT, created TEXT)"""
+    )
+
+
+def hash_pw(password, salt=None):
+    salt = salt or os.urandom(16)
+    h = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PW_ROUNDS)
+    return salt.hex(), h.hex()
+
+
+def check_pw(password, salt_hex, hash_hex):
+    h = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), PW_ROUNDS)
+    return hmac.compare_digest(h.hex(), hash_hex)
+
+
+def get_profile(username):
+    r = urows(
+        "SELECT name, college, course, semester, goal_hours, about FROM users WHERE username=?",
+        (username,),
+    )
+    if not r:
+        return {}
+    return dict(zip(["name", "college", "course", "semester", "goal_hours", "about"], r[0]))
+
+
+def greeting():
+    u = st.session_state.get("user", "")
+    name = (get_profile(u).get("name") or u).strip()
+    return f"Hi {name.split()[0] if name else u}  ·  "
+
+
+def avatar_path(username):
+    for f in (DATA_DIR / username).glob("avatar.*"):
+        return f
+    return None
+
+
+def avatar_html(username, name):
+    av = avatar_path(username)
+    if av:
+        mime = "image/png" if av.suffix.lower() == ".png" else "image/jpeg"
+        data = base64.b64encode(av.read_bytes()).decode()
+        return f'<img class="av" src="data:{mime};base64,{data}">'
+    return f'<div class="av">{html.escape((name or username)[:1].upper())}</div>'
+
+
+def migrate_legacy(username):
+    """The first account adopts the notes and files saved before accounts existed."""
+    if not Path(LEGACY_DB).exists():
+        return False
+    d = DATA_DIR / username
+    d.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(LEGACY_DB, d / "topper_nest.db")
+    for old in ("saved_files", "songs"):
+        if Path(old).is_dir():
+            shutil.copytree(old, d / old, dirs_exist_ok=True)
+    c = sqlite3.connect(d / "topper_nest.db")
+    try:
+        with c:
+            for table, col, folder in (("files", "path", "saved_files"), ("songs", "source", "songs")):
+                try:
+                    for rid, val in c.execute(f"SELECT id, {col} FROM {table}").fetchall():
+                        p = Path(val)
+                        if p.parts and p.parts[0] == folder:
+                            c.execute(f"UPDATE {table} SET {col}=? WHERE id=?", (str(d / p), rid))
+                except sqlite3.OperationalError:
+                    pass
+    finally:
+        c.close()
+    return True
+
+
+def do_signup(username, name, password, confirm):
+    u = username.strip().lower()
+    if not re.fullmatch(r"[a-z0-9_]{3,20}", u):
+        return "Username must be 3 to 20 letters, numbers or underscores (no spaces)."
+    if len(password) < 6:
+        return "Password must be at least 6 characters."
+    if password != confirm:
+        return "The two passwords do not match."
+    if urows("SELECT 1 FROM users WHERE username=?", (u,)):
+        return "That username is already taken."
+    first_user = not urows("SELECT 1 FROM users LIMIT 1")
+    salt, h = hash_pw(password)
+    urun(
+        "INSERT INTO users(username, salt, pw_hash, name, course, created) VALUES(?,?,?,?,?,?)",
+        (u, salt, h, name.strip() or u, "BSc IT", now_text()),
+    )
+    st.session_state["user"] = u
+    if first_user and migrate_legacy(u):
+        flash("Your earlier notes and files were moved into this account")
+    return None
+
+
+def do_login(username, password):
+    if st.session_state.get("fails", 0) >= 5:
+        return "Too many wrong attempts. Refresh the page to try again."
+    u = username.strip().lower()
+    r = urows("SELECT salt, pw_hash FROM users WHERE username=?", (u,))
+    if not r or not check_pw(password, r[0][0], r[0][1]):
+        st.session_state["fails"] = st.session_state.get("fails", 0) + 1
+        time.sleep(0.5)
+        return "Wrong username or password."
+    st.session_state["user"] = u
+    st.session_state["fails"] = 0
+    return None
+
+
+def login_screen():
+    st.markdown(
+        "<style>[data-testid='stSidebar'],[data-testid='stSidebarCollapsedControl'],"
+        "[data-testid='collapsedControl']{display:none !important}"
+        ".block-container{max-width:560px !important;padding-top:7vh !important}</style>"
+        '<div class="login-head"><div class="logo"></div>'
+        '<div class="lt">Welcome to <span class="grad2">Topper Nest</span></div>'
+        '<div class="ls">Log in or create an account to continue</div></div>',
+        unsafe_allow_html=True,
+    )
+    t_in, t_up = st.tabs(["Log in", "Sign up"])
+    with t_in:
+        with st.form("login_form"):
+            u = st.text_input("Username", key="li_user")
+            pw = st.text_input("Password", type="password", key="li_pass")
+            if st.form_submit_button("Log in"):
+                err = do_login(u, pw)
+                if err:
+                    st.error(err)
+                else:
+                    st.rerun()
+    with t_up:
+        with st.form("signup_form"):
+            u = st.text_input("Choose a username", key="su_user")
+            name = st.text_input("Your name", key="su_name")
+            pw = st.text_input("Password", type="password", key="su_pass")
+            pw2 = st.text_input("Confirm password", type="password", key="su_pass2")
+            if st.form_submit_button("Create account"):
+                err = do_signup(u, name, pw, pw2)
+                if err:
+                    st.error(err)
+                else:
+                    st.rerun()
+    st.caption("Everything stays on this computer. Each account has its own private notes, files and progress.")
+
+
+def page_profile():
+    u = st.session_state["user"]
+    p = get_profile(u)
+    fancy_header("Profile", "Your details and study summary")
+
+    left, right = st.columns([1, 2])
+    with left:
+        with st.container(key="avatarbox"):
+            av = avatar_path(u)
+            if av:
+                st.image(str(av), width=150)
+            else:
+                st.markdown(f'<div class="bigav">{html.escape((p.get("name") or u)[:1].upper())}</div>',
+                            unsafe_allow_html=True)
+        photo = st.file_uploader("Profile photo", type=["png", "jpg", "jpeg"], key="avatar_up")
+        if photo is not None and st.button("Save photo", key="save_photo"):
+            if photo.size > 2 * 1024 * 1024:
+                st.warning("Photo must be smaller than 2 MB.")
+            else:
+                for old in (DATA_DIR / u).glob("avatar.*"):
+                    old.unlink()
+                (user_dir() / f"avatar{Path(photo.name).suffix.lower()}").write_bytes(photo.getbuffer())
+                st.rerun()
+        st.caption(f"Username: {u}")
+
+    with right:
+        t1, t2 = st.tabs(["Details", "Password"])
+        with t1:
+            with st.form("profile_form"):
+                name = st.text_input("Name", value=p.get("name") or "")
+                college = st.text_input("College", value=p.get("college") or "")
+                c1, c2 = st.columns(2)
+                course = c1.text_input("Course", value=p.get("course") or "")
+                semester = c2.text_input("Semester", value=p.get("semester") or "")
+                goal = st.number_input("Daily study goal (hours)", 0.5, 16.0,
+                                       float(p.get("goal_hours") or 2), step=0.5)
+                about = st.text_area("About me", value=p.get("about") or "", height=100)
+                if st.form_submit_button("Save details"):
+                    urun(
+                        "UPDATE users SET name=?, college=?, course=?, semester=?, goal_hours=?, about=? "
+                        "WHERE username=?",
+                        (name.strip() or u, college.strip(), course.strip(), semester.strip(), goal,
+                         about.strip(), u),
+                    )
+                    flash("Profile saved")
+                    st.rerun()
+        with t2:
+            with st.form("password_form", clear_on_submit=True):
+                cur = st.text_input("Current password", type="password")
+                new = st.text_input("New password", type="password")
+                new2 = st.text_input("Confirm new password", type="password")
+                if st.form_submit_button("Change password"):
+                    r = urows("SELECT salt, pw_hash FROM users WHERE username=?", (u,))
+                    if not check_pw(cur, r[0][0], r[0][1]):
+                        st.error("Current password is wrong.")
+                    elif len(new) < 6:
+                        st.error("New password must be at least 6 characters.")
+                    elif new != new2:
+                        st.error("The new passwords do not match.")
+                    else:
+                        salt, h = hash_pw(new)
+                        urun("UPDATE users SET salt=?, pw_hash=? WHERE username=?", (salt, h, u))
+                        st.success("Password changed")
+
+    st.subheader("Your study summary")
+    secs = rows("SELECT COALESCE(SUM(seconds),0) FROM usage")[0][0]
+    days = rows("SELECT COUNT(DISTINCT day) FROM usage")[0][0]
+    n_notes = rows("SELECT COUNT(*) FROM notes")[0][0]
+    tot = rows("SELECT COUNT(*), COALESCE(SUM(correct),0) FROM attempts")[0]
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Time in the app", f"{round(secs / 3600, 1)} h")
+    m2.metric("Days active", days)
+    m3.metric("Notes written", n_notes)
+    m4.metric("Practice accuracy", f"{round(100 * tot[1] / tot[0])}%" if tot[0] else "-")
+
+
 # ====================== pages ======================
 def page_home():
     today = date.today().isoformat()
@@ -367,7 +647,7 @@ def page_home():
         status = f"{len(pending)} goal(s) left today"
     st.markdown(
         '<div class="hero">'
-        f'<span class="badge">{html.escape(status)}</span>'
+        f'<span class="badge">{html.escape(greeting() + status)}</span>'
         '<div class="hero-title">Study smarter with <span class="grad">Topper Nest</span></div>'
         '<div class="hero-sub">Notes, practice, goals and your syllabus, together in one calm workspace.</div>'
         '</div>',
@@ -777,7 +1057,7 @@ def page_music():
         link = st.text_input("...or a direct audio link (optional)")
         if st.form_submit_button("Add song") and title.strip():
             if up is not None:
-                path = SONGS_DIR / f"{int(time.time())}_{Path(up.name).name}"
+                path = songs_dir() / f"{int(time.time())}_{Path(up.name).name}"
                 path.write_bytes(up.getbuffer())
                 run("INSERT INTO songs(title, source) VALUES(?,?)", (title.strip(), str(path)))
                 st.success("Song added")
@@ -802,7 +1082,7 @@ def page_files():
         ups = st.file_uploader("Choose files", accept_multiple_files=True)
         if st.form_submit_button("Save files") and ups:
             for up in ups:
-                path = FILES_DIR / f"{int(time.time())}_{Path(up.name).name}"
+                path = files_dir() / f"{int(time.time())}_{Path(up.name).name}"
                 path.write_bytes(up.getbuffer())
                 run("INSERT INTO files(name, subject, path, created) VALUES(?,?,?,?)",
                     (Path(up.name).name, subject.strip(), str(path), now_text()))
@@ -858,23 +1138,34 @@ def page_usage():
 def main():
     st.set_page_config(page_title="Topper Nest", layout="wide", initial_sidebar_state="expanded")
     ensure_theme()
-    init_db()
+    init_users()
     style()
+    user = st.session_state.get("user")
+    if not user:
+        login_screen()
+        return
+    init_db()
+    prof = get_profile(user)
     st.sidebar.markdown(
-        '<div class="brand"><div class="logo"></div><div>Topper Nest<small>your study workspace</small></div></div>',
+        '<div class="brand"><div class="logo"></div><div>Topper Nest<small>your study workspace</small></div></div>'
+        f'<div class="chip">{avatar_html(user, prof.get("name"))}'
+        f'<div class="nm">{html.escape(prof.get("name") or user)}<small>@{html.escape(user)}</small></div></div>',
         unsafe_allow_html=True,
     )
     page = st.sidebar.radio("Menu", PAGES, key="menu")
     st.sidebar.divider()
     st.sidebar.text_input("Claude API key (for AI pages)", type="password", key="api_key")
     st.sidebar.number_input("AI messages allowed per day", 1, 500, DEFAULT_DAILY_LIMIT, key="ai_limit")
+    if st.sidebar.button("Log out", key="logout"):
+        st.session_state.clear()
+        st.rerun()
     track(page)
     {
         "Home": page_home, "Syllabus": page_syllabus, "Planner": page_planner,
         "Practice": page_practice, "Mistakes": page_mistakes, "Notes": page_notes,
         "AI Tutor": page_ai_tutor, "English Coach": page_english,
         "Study Videos": page_videos, "Music": page_music, "Files": page_files,
-        "Calculator": page_calculator, "Usage Stats": page_usage,
+        "Calculator": page_calculator, "Usage Stats": page_usage, "Profile": page_profile,
     }[page]()
     show_flash()
 
