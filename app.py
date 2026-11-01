@@ -1,9 +1,8 @@
-
 """Topper Nest - complete version (v2)
- 
+
 Pages: Home, Syllabus, Planner, Practice, Mistakes, Notes, AI Tutor,
 English Coach, Study Videos, Music, Files, Calculator, Usage Stats.
- 
+
 Run:
     pip install streamlit pandas anthropic
     streamlit run app.py
@@ -18,38 +17,32 @@ import sqlite3
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
- 
+
 import pandas as pd
 import streamlit as st
- 
+
 DB_FILE = "topper_nest.db"
 FILES_DIR = Path("saved_files")
 SONGS_DIR = Path("songs")
 MODEL = "claude-sonnet-5-5"  # change here if you want another model
 DEFAULT_DAILY_LIMIT = 30  # AI messages per day (keeps API cost under control)
 IDLE_CAP = 300  # seconds; long idle gaps are not counted as study time
- 
+
 PAGES = [
     "Home", "Syllabus", "Planner", "Practice", "Mistakes", "Notes",
     "AI Tutor", "English Coach", "Study Videos", "Music", "Files",
     "Calculator", "Usage Stats",
 ]
-ICONS = {
-    "Home": "🏠", "Syllabus": "📚", "Planner": "🗓️", "Practice": "🎯",
-    "Mistakes": "🧠", "Notes": "📝", "AI Tutor": "🤖", "English Coach": "💬",
-    "Study Videos": "🎬", "Music": "🎵", "Files": "📁", "Calculator": "🧮",
-    "Usage Stats": "📊",
-}
 STATUSES = ["Not started", "Studying", "Done"]
 QTYPES = ["Objective (MCQ)", "Numerical", "Subjective"]
 DIFFS = ["Easy", "Medium", "Hard", "Trap"]
- 
- 
+
+
 # ====================== database helpers ======================
 def db():
     return sqlite3.connect(DB_FILE)
- 
- 
+
+
 def run(sql, params=()):
     c = db()
     try:
@@ -57,20 +50,20 @@ def run(sql, params=()):
             c.execute(sql, params)
     finally:
         c.close()
- 
- 
+
+
 def rows(sql, params=()):
     c = db()
     try:
         return c.execute(sql, params).fetchall()
     finally:
         c.close()
- 
- 
+
+
 def now_text():
     return datetime.now().isoformat(timespec="minutes")
- 
- 
+
+
 def init_db():
     FILES_DIR.mkdir(exist_ok=True)
     SONGS_DIR.mkdir(exist_ok=True)
@@ -114,8 +107,8 @@ def init_db():
     ]
     for s in statements:
         run(s)
- 
- 
+
+
 # ====================== usage tracking ======================
 def track(page):
     """Add the time since the last click to the page the student was on."""
@@ -137,14 +130,14 @@ def track(page):
         )
     st.session_state.page = page
     st.session_state.last_tick = now
- 
- 
+
+
 # ====================== AI helpers ======================
 def ai_calls_today():
     r = rows("SELECT count FROM ai_calls WHERE day=?", (date.today().isoformat(),))
     return r[0][0] if r else 0
- 
- 
+
+
 def ask_ai(messages, system):
     """Returns (text, error). Error is None when everything worked."""
     key = st.session_state.get("api_key") or os.getenv("ANTHROPIC_API_KEY")
@@ -170,8 +163,8 @@ def ask_ai(messages, system):
         return resp.content[0].text, None
     except Exception as e:
         return None, f"AI error: {e}"
- 
- 
+
+
 def chat_ui(history_key, system, intro):
     st.caption(intro)
     hist = st.session_state.setdefault(history_key, [])
@@ -194,14 +187,14 @@ def chat_ui(history_key, system, intro):
     if hist and st.button("Clear chat", key=f"clear_{history_key}"):
         st.session_state[history_key] = []
         st.rerun()
- 
- 
+
+
 def parse_json_list(text):
     text = text.strip()
     start, end = text.find("["), text.rfind("]")
     return json.loads(text[start:end + 1])
- 
- 
+
+
 # ====================== safe calculator ======================
 OPS = {
     ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
@@ -211,8 +204,8 @@ OPS = {
 MATH_FUNCS = {k: getattr(math, k) for k in dir(math)
               if not k.startswith("_") and callable(getattr(math, k))}
 MATH_CONSTS = {"pi": math.pi, "e": math.e, "tau": math.tau}
- 
- 
+
+
 def safe_eval(node):
     if isinstance(node, ast.Expression):
         return safe_eval(node.body)
@@ -231,121 +224,168 @@ def safe_eval(node):
             and node.func.id in MATH_FUNCS and not node.keywords):
         return MATH_FUNCS[node.func.id](*[safe_eval(a) for a in node.args])
     raise ValueError("not allowed")
- 
- 
+
+
 # ====================== look and feel ======================
+THEME_TOML = """[theme]
+base = "light"
+primaryColor = "#2f8f46"
+backgroundColor = "#f3f9f5"
+secondaryBackgroundColor = "#e3f0e7"
+textColor = "#0f2a1f"
+"""
+
 CSS = """
-:root{--a1:#7f5af0;--a2:#2cb67d;--a3:#ff6b9d;--a4:#5b8def;}
-@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
-@keyframes floaty{0%,100%{transform:translateY(0) rotate(-5deg)}50%{transform:translateY(-14px) rotate(5deg)}}
-@keyframes gradmove{0%{background-position:0% 50%}100%{background-position:100% 50%}}
-@keyframes pop{0%{transform:scale(.6);opacity:0}70%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+:root{--forest:#0a2e1f;--forest2:#0f3d2a;--green:#2f8f46;--mint:#7fd69a;--ink:#0f2a1f;}
+html,body,.stApp,.stApp p,.stApp label,.stApp li,.stApp h1,.stApp h2,.stApp h3,.stApp h4,button,input,textarea,[data-baseweb]{font-family:'Inter',system-ui,'Segoe UI',Roboto,sans-serif !important}
+@keyframes glassIn{from{opacity:0;transform:translateY(12px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes bgshift{from{background-position:0% 0%,100% 0%,50% 100%}to{background-position:10% 16%,90% 12%,42% 90%}}
+@keyframes sweep{0%{left:-60%}55%,100%{left:140%}}
 @property --p{syntax:'<number>';inherits:false;initial-value:0;}
 @keyframes fillring{from{--p:0}}
-.stApp{background-image:radial-gradient(900px 520px at 6% -6%,rgba(127,90,240,.22),transparent 60%),radial-gradient(800px 520px at 100% 0%,rgba(44,182,125,.17),transparent 60%),radial-gradient(760px 520px at 55% 112%,rgba(255,107,157,.15),transparent 60%);background-attachment:fixed}
+.stApp{background-color:#f3f9f5;color:var(--ink);background-image:radial-gradient(800px 520px at 8% -8%,rgba(47,143,70,.30),transparent 62%),radial-gradient(760px 520px at 100% 6%,rgba(127,214,154,.36),transparent 62%),radial-gradient(900px 560px at 45% 115%,rgba(10,46,31,.20),transparent 60%);background-size:140% 140%;background-attachment:fixed;animation:bgshift 24s ease-in-out infinite alternate}
 [data-testid="stHeader"]{background:transparent}
 [data-testid="stAppDeployButton"],#MainMenu,footer{display:none !important}
-[data-testid="stElementContainer"],.element-container{animation:fadeUp .55s ease both}
-[data-testid="stSidebar"]{background-image:linear-gradient(180deg,rgba(127,90,240,.16),rgba(44,182,125,.10));border-right:1px solid rgba(127,90,240,.18)}
-[data-testid="stSidebar"] [role="radiogroup"] label{padding:7px 12px;border-radius:12px;transition:all .2s ease;margin-bottom:2px}
-[data-testid="stSidebar"] [role="radiogroup"] label:hover{background:rgba(127,90,240,.16);transform:translateX(5px)}
-.brand{font-size:1.45rem;font-weight:800;padding:6px 4px 14px;background:linear-gradient(90deg,var(--a1),var(--a2));-webkit-background-clip:text;background-clip:text;color:transparent;animation:pop .7s ease both}
-.brand small{display:block;font-size:.72rem;font-weight:500;opacity:.8;-webkit-text-fill-color:currentColor}
-.ph{margin:2px 0 12px;animation:fadeUp .5s ease both}
-.ph .i{display:inline-block;font-size:2rem;margin-right:10px;animation:floaty 3.4s ease-in-out infinite}
-.ph .t{font-size:2.15rem;font-weight:800;display:inline-block;background:linear-gradient(90deg,var(--a1),var(--a2));-webkit-background-clip:text;background-clip:text;color:transparent}
-.ph .s{opacity:.7;margin-top:2px}
-.hero{display:flex;align-items:center;gap:24px;padding:26px 30px;border-radius:28px;color:#fff;background:linear-gradient(120deg,#7f5af0,#5b8def,#2cb67d,#ff6b9d,#7f5af0);background-size:300% 300%;animation:gradmove 9s ease infinite alternate,fadeUp .6s ease both;box-shadow:0 16px 44px rgba(127,90,240,.38);margin-bottom:18px}
-.mascot{font-size:84px;line-height:1;animation:floaty 3.2s ease-in-out infinite;filter:drop-shadow(0 10px 10px rgba(0,0,0,.28))}
-.hero-title{font-size:2.3rem;font-weight:800;letter-spacing:.3px}
-.hero-sub{opacity:.92;margin:2px 0 12px}
-.bubble{display:inline-block;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.4);backdrop-filter:blur(6px);border-radius:18px;padding:10px 16px;font-weight:500}
-.rings{display:flex;gap:34px;flex-wrap:wrap;justify-content:center;margin:14px 0 8px}
-.ringbox{text-align:center;animation:pop .8s ease both}
+[data-testid="stElementContainer"],.element-container{animation:glassIn .5s ease backwards}
+.block-container h1,.block-container h2,.block-container h3,.block-container h4,.block-container label,.block-container li,.block-container [data-testid="stMarkdownContainer"] p{color:var(--ink)}
+.block-container h1,.block-container h2,.block-container h3{letter-spacing:-.02em;font-weight:700}
+[data-testid="stSidebar"]{background-image:linear-gradient(185deg,#0a2e1f 0%,#0f3d2a 55%,#14532d 100%);border-right:1px solid rgba(255,255,255,.08)}
+[data-testid="stSidebar"] p,[data-testid="stSidebar"] label,[data-testid="stSidebar"] span,[data-testid="stSidebar"] small,[data-testid="stSidebar"] h1,[data-testid="stSidebar"] h2,[data-testid="stSidebar"] h3{color:#e9f6ee !important}
+[data-testid="stSidebar"] [role="radiogroup"]{gap:4px}
+[data-testid="stSidebar"] [role="radiogroup"] label{padding:9px 14px;margin:0;border-radius:12px;border:1px solid transparent;transition:all .25s ease}
+[data-testid="stSidebar"] [role="radiogroup"] label:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.14);transform:translateX(3px)}
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked){background:rgba(255,255,255,.14);border-color:rgba(127,214,154,.55);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 6px 18px rgba(0,0,0,.18);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+[data-testid="stSidebar"] input{background:transparent !important;color:#fff !important}
+[data-testid="stSidebar"] div[data-baseweb="input"]{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:10px}
+.brand{display:flex;align-items:center;gap:11px;font-size:1.3rem;font-weight:800;letter-spacing:-.02em;color:#fff;padding:6px 4px 16px}
+.brand .logo{width:32px;height:32px;border-radius:10px;background-image:linear-gradient(135deg,#9ee6b4,#2f8f46);box-shadow:0 6px 16px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.5)}
+.brand small{display:block;font-size:.72rem;font-weight:500;opacity:.75;letter-spacing:0}
+.hero{position:relative;overflow:hidden;text-align:center;padding:56px 34px 48px;border-radius:30px;color:#fff;background-image:radial-gradient(600px 300px at 15% 0%,rgba(127,214,154,.38),transparent 60%),radial-gradient(500px 300px at 95% 100%,rgba(47,143,70,.55),transparent 60%),linear-gradient(135deg,#0a2e1f,#0f3d2a 55%,#14532d);border:1px solid rgba(255,255,255,.14);box-shadow:0 24px 60px rgba(10,46,31,.35),inset 0 1px 0 rgba(255,255,255,.2);animation:glassIn .7s ease backwards;margin-bottom:22px}
+.hero::after{content:"";position:absolute;top:0;left:-60%;width:40%;height:100%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.10),transparent);transform:skewX(-20deg);animation:sweep 7s ease-in-out infinite;pointer-events:none}
+.badge{display:inline-block;padding:7px 16px;border-radius:999px;font-size:.85rem;font-weight:600;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:#d9f5e3}
+.hero-title{font-size:3.1rem;line-height:1.08;font-weight:800;letter-spacing:-.035em;margin:20px 0 10px;color:#fff}
+.grad{background-image:linear-gradient(90deg,#9ee6b4,#ffffff 75%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero-sub{font-size:1.1rem;color:rgba(255,255,255,.82);max-width:640px;margin:0 auto}
+.ph{margin:4px 0 18px;animation:glassIn .5s ease backwards}
+.ph .t{font-size:2.5rem;font-weight:800;letter-spacing:-.03em;line-height:1.1;display:inline-block;background-image:linear-gradient(90deg,#0a2e1f,#2f8f46);-webkit-background-clip:text;background-clip:text;color:transparent}
+.ph .s{opacity:.7;margin-top:6px;font-size:1.02rem}
+.ph .bar{width:54px;height:4px;border-radius:4px;margin-top:12px;background-image:linear-gradient(90deg,#2f8f46,#7fd69a)}
+.rings{display:flex;gap:46px;flex-wrap:wrap;justify-content:center;padding:26px;margin:6px 0 18px;border-radius:24px;background:rgba(255,255,255,.55);-webkit-backdrop-filter:blur(18px) saturate(150%);backdrop-filter:blur(18px) saturate(150%);border:1px solid rgba(255,255,255,.8);box-shadow:0 10px 34px rgba(15,61,42,.10),inset 0 1px 0 rgba(255,255,255,.9)}
+.ringbox{text-align:center}
 .ringwrap{position:relative;width:124px;height:124px;margin:0 auto}
-.ring{width:124px;height:124px;border-radius:50%;background:conic-gradient(var(--a1),var(--a2) calc(var(--p)*1%),rgba(127,127,127,.18) 0);-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 13px),#000 calc(100% - 12px));mask:radial-gradient(farthest-side,transparent calc(100% - 13px),#000 calc(100% - 12px));animation:fillring 1.4s ease-out}
-.ringlabel{position:absolute;inset:0;display:grid;place-items:center;font-size:1.45rem;font-weight:800}
-.ringcap{margin-top:8px;font-weight:600;opacity:.85}
-[data-testid="stMetric"]{padding:16px 18px;border-radius:20px;background:color-mix(in srgb,currentColor 6%,transparent);border:1px solid color-mix(in srgb,currentColor 12%,transparent);transition:all .25s ease}
-[data-testid="stMetric"]:hover{transform:translateY(-5px);box-shadow:0 12px 30px rgba(127,90,240,.25)}
-.stButton>button,.stFormSubmitButton>button,.stDownloadButton>button{border-radius:14px;border:none;color:#fff;font-weight:600;padding:.5rem 1.2rem;background:linear-gradient(135deg,var(--a1),var(--a4));transition:all .2s ease}
-.stButton>button:hover,.stFormSubmitButton>button:hover,.stDownloadButton>button:hover{transform:translateY(-2px) scale(1.04);box-shadow:0 10px 24px rgba(127,90,240,.45);color:#fff}
-.stButton>button:active,.stFormSubmitButton>button:active{transform:scale(.96)}
-[data-testid="stExpander"]{border-radius:18px;border:1px solid color-mix(in srgb,currentColor 13%,transparent);transition:all .25s ease;overflow:hidden}
-[data-testid="stExpander"]:hover{border-color:var(--a1);box-shadow:0 8px 22px rgba(127,90,240,.18)}
-[data-testid="stForm"]{border-radius:20px;border:1px solid color-mix(in srgb,currentColor 13%,transparent);background:color-mix(in srgb,currentColor 3%,transparent)}
-[data-testid="stAlert"]{border-radius:16px}
-[data-testid="stChatMessage"]{border-radius:18px;animation:fadeUp .4s ease both}
+.ring{width:124px;height:124px;border-radius:50%;background:conic-gradient(#2f8f46,#7fd69a calc(var(--p)*1%),rgba(15,61,42,.12) 0);-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 13px),#000 calc(100% - 12px));mask:radial-gradient(farthest-side,transparent calc(100% - 13px),#000 calc(100% - 12px));animation:fillring 1.4s ease-out}
+.ringlabel{position:absolute;inset:0;display:grid;place-items:center;font-size:1.4rem;font-weight:800;color:var(--ink)}
+.ringcap{margin-top:8px;font-weight:600;color:var(--ink);opacity:.8}
+[data-testid="stMetric"],[data-testid="stExpander"],[data-testid="stForm"]{position:relative;overflow:hidden;background:rgba(255,255,255,.55);-webkit-backdrop-filter:blur(18px) saturate(150%);backdrop-filter:blur(18px) saturate(150%);border:1px solid rgba(255,255,255,.8);border-radius:20px;box-shadow:0 10px 34px rgba(15,61,42,.10),inset 0 1px 0 rgba(255,255,255,.9);transition:transform .3s ease,box-shadow .3s ease,border-color .3s ease}
+[data-testid="stMetric"]{padding:16px 20px}
+[data-testid="stExpander"] details{border:none !important;background:transparent}
+[data-testid="stMetric"]:hover,[data-testid="stExpander"]:hover{transform:translateY(-3px);border-color:rgba(47,143,70,.5);box-shadow:0 18px 44px rgba(15,61,42,.18),inset 0 1px 0 rgba(255,255,255,.9)}
+[data-testid="stMetric"]::after,[data-testid="stExpander"]::after{content:"";position:absolute;top:0;left:-130%;width:55%;height:100%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.65),transparent);transform:skewX(-18deg);transition:left .9s ease;pointer-events:none}
+[data-testid="stMetric"]:hover::after,[data-testid="stExpander"]:hover::after{left:150%}
+.stButton>button,.stFormSubmitButton>button,.stDownloadButton>button{position:relative;overflow:hidden;width:100%;border-radius:12px;border:1px solid rgba(255,255,255,.25);font-weight:600;letter-spacing:.01em;padding:.55rem 1.3rem;background-image:linear-gradient(135deg,#2f8f46,#1f6b34);box-shadow:0 8px 22px rgba(47,143,70,.32),inset 0 1px 0 rgba(255,255,255,.35);transition:transform .2s ease,box-shadow .2s ease}
+.stButton>button p,.stFormSubmitButton>button p,.stDownloadButton>button p{color:#fff !important}
+.stButton>button:hover,.stFormSubmitButton>button:hover,.stDownloadButton>button:hover{transform:translateY(-2px);box-shadow:0 14px 30px rgba(47,143,70,.42),inset 0 1px 0 rgba(255,255,255,.35);border-color:rgba(255,255,255,.4)}
+.stButton>button:active,.stFormSubmitButton>button:active{transform:translateY(0) scale(.98)}
+.stButton>button::after,.stFormSubmitButton>button::after,.stDownloadButton>button::after{content:"";position:absolute;top:0;left:-120%;width:50%;height:100%;background:linear-gradient(100deg,transparent,rgba(255,255,255,.35),transparent);transform:skewX(-18deg);transition:left .7s ease;pointer-events:none}
+.stButton>button:hover::after,.stFormSubmitButton>button:hover::after,.stDownloadButton>button:hover::after{left:140%}
+[class*="st-key-go_"] button{background-image:none;background-color:rgba(255,255,255,.6);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.85);box-shadow:0 8px 24px rgba(15,61,42,.12),inset 0 1px 0 rgba(255,255,255,.9)}
+[class*="st-key-go_"] button p{color:#0f3d2a !important}
+[class*="st-key-go_"] button:hover{background-color:rgba(255,255,255,.85);box-shadow:0 14px 32px rgba(15,61,42,.2)}
+div[data-baseweb="input"],div[data-baseweb="textarea"],div[data-baseweb="select"]>div{border-radius:12px !important;transition:box-shadow .2s ease,border-color .2s ease}
+.block-container div[data-baseweb="input"],.block-container div[data-baseweb="textarea"],.block-container div[data-baseweb="select"]>div{background-color:rgba(255,255,255,.7) !important;border:1px solid rgba(15,61,42,.14) !important}
+.block-container div[data-baseweb="input"]:focus-within,.block-container div[data-baseweb="textarea"]:focus-within{border-color:#2f8f46 !important;box-shadow:0 0 0 3px rgba(47,143,70,.18)}
+[data-testid="stAlert"]{border-radius:16px;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+[data-testid="stChatMessage"]{border-radius:18px;background:rgba(255,255,255,.55);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.8);animation:glassIn .4s ease backwards}
 button[data-baseweb="tab"]{font-weight:600;border-radius:12px 12px 0 0;transition:all .2s ease}
-button[data-baseweb="tab"]:hover{background:rgba(127,90,240,.12)}
-[data-testid="stProgress"] [role="progressbar"]>div,div[data-baseweb="progress-bar"]>div>div{background-image:linear-gradient(90deg,var(--a1),var(--a2)) !important;border-radius:10px}
-input,textarea{border-radius:12px !important}
+button[data-baseweb="tab"]:hover{background:rgba(47,143,70,.10)}
+button[data-baseweb="tab"][aria-selected="true"]{color:#2f8f46}
+[data-baseweb="tab-highlight"]{background-color:#2f8f46 !important}
+[data-testid="stProgress"] [role="progressbar"]>div,div[data-baseweb="progress-bar"]>div>div{background-image:linear-gradient(90deg,#2f8f46,#7fd69a) !important;border-radius:10px}
 ::-webkit-scrollbar{width:9px}
-::-webkit-scrollbar-thumb{background:linear-gradient(var(--a1),var(--a2));border-radius:9px}
+::-webkit-scrollbar-thumb{background:linear-gradient(#2f8f46,#7fd69a);border-radius:9px}
 """
- 
- 
+
+
 def style():
     st.markdown("<style>" + CSS + "</style>", unsafe_allow_html=True)
- 
- 
-def fancy_header(icon, title, sub=""):
+
+
+def ensure_theme():
+    """One-time: writes a light green theme file; Streamlit reads it on the next start."""
+    cfg = Path(".streamlit") / "config.toml"
+    if not cfg.exists():
+        try:
+            cfg.parent.mkdir(exist_ok=True)
+            cfg.write_text(THEME_TOML, encoding="utf-8")
+        except OSError:
+            pass
+
+
+def fancy_header(title, sub=""):
     sub_html = f'<div class="s">{html.escape(sub)}</div>' if sub else ""
     st.markdown(
-        f'<div class="ph"><span class="i">{icon}</span><span class="t">{html.escape(title)}</span>{sub_html}</div>',
+        f'<div class="ph"><span class="t">{html.escape(title)}</span>{sub_html}<div class="bar"></div></div>',
         unsafe_allow_html=True,
     )
- 
- 
+
+
 def ring(pct, label):
     pct = max(0, min(100, int(round(pct))))
     return (
         f'<div class="ringbox"><div class="ringwrap"><div class="ring" style="--p:{pct}"></div>'
         f'<div class="ringlabel">{pct}%</div></div><div class="ringcap">{html.escape(label)}</div></div>'
     )
- 
- 
+
+
+def go(page):
+    """Button callback: jump to another page from the Home screen."""
+    st.session_state["menu"] = page
+
+
 def flash(message, effect=None):
-    """Show a toast (and optional balloons/snow) on the next run, even after st.rerun()."""
+    """Show a toast on the next run, even after st.rerun()."""
     st.session_state["flash"] = (message, effect)
- 
- 
+
+
 def show_flash():
     f = st.session_state.pop("flash", None)
     if f:
-        message, effect = f
-        st.toast(message)
-        if effect == "balloons":
-            st.balloons()
-        elif effect == "snow":
-            st.snow()
- 
- 
+        st.toast(f[0])
+
+
 # ====================== pages ======================
 def page_home():
     today = date.today().isoformat()
     goals = rows("SELECT text, done FROM goals WHERE day=?", (today,))
     pending = [g[0] for g in goals if not g[1]]
     if not goals:
-        msg = "No goals for today yet. Open Planner and add some!"
+        status = "No goals set for today"
     elif not pending:
-        msg = "All of today's goals are done. Great job!"
+        status = "All of today's goals are complete"
     else:
-        msg = f"{len(pending)} goal(s) left today: " + ", ".join(pending)
+        status = f"{len(pending)} goal(s) left today"
     st.markdown(
-        '<div class="hero"><div class="mascot">🦜</div><div>'
-        '<div class="hero-title">Topper Nest</div>'
-        '<div class="hero-sub">Your study space: notes, practice, goals and more.</div>'
-        f'<div class="bubble">{html.escape(msg)}</div></div></div>',
+        '<div class="hero">'
+        f'<span class="badge">{html.escape(status)}</span>'
+        '<div class="hero-title">Study smarter with <span class="grad">Topper Nest</span></div>'
+        '<div class="hero-sub">Notes, practice, goals and your syllabus, together in one calm workspace.</div>'
+        '</div>',
         unsafe_allow_html=True,
     )
- 
+
+    q1, q2, q3, q4 = st.columns(4)
+    q1.button("Write a note", key="go_notes", on_click=go, args=("Notes",))
+    q2.button("Practice questions", key="go_practice", on_click=go, args=("Practice",))
+    q3.button("Plan today", key="go_planner", on_click=go, args=("Planner",))
+    q4.button("Track syllabus", key="go_syllabus", on_click=go, args=("Syllabus",))
+
     n_notes = rows("SELECT COUNT(*) FROM notes")[0][0]
     n_open = rows("SELECT COUNT(*) FROM mistakes WHERE fixed=0")[0][0]
     total_t = rows("SELECT COUNT(*) FROM topics")[0][0]
     done_t = rows("SELECT COUNT(*) FROM topics WHERE status='Done'")[0][0]
     tot = rows("SELECT COUNT(*), COALESCE(SUM(correct),0) FROM attempts")[0]
- 
+
     goal_pct = 100 * (len(goals) - len(pending)) / len(goals) if goals else 0
     syl_pct = 100 * done_t / total_t if total_t else 0
     acc_pct = 100 * tot[1] / tot[0] if tot[0] else 0
@@ -354,7 +394,7 @@ def page_home():
         + ring(acc_pct, "Practice accuracy") + "</div>",
         unsafe_allow_html=True,
     )
- 
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Notes saved", n_notes)
     c2.metric("Mistakes to fix", n_open)
@@ -362,10 +402,10 @@ def page_home():
     c4.metric("AI messages today", ai_calls_today())
     if total_t - done_t > 0:
         st.warning(f"{total_t - done_t} syllabus topic(s) are not finished yet. Open Syllabus.")
- 
- 
+
+
 def page_syllabus():
-    fancy_header("📚", "Syllabus tracker", "Know exactly what is done and what is left")
+    fancy_header("Syllabus tracker", "Know exactly what is done and what is left")
     with st.form("add_topics", clear_on_submit=True):
         subject = st.text_input("Subject")
         topics = st.text_area("Topics (one topic per line)", height=120)
@@ -375,18 +415,18 @@ def page_syllabus():
                     run("INSERT INTO topics(subject, topic, updated) VALUES(?,?,?)",
                         (subject.strip(), line.strip(), now_text()))
             st.success("Added")
- 
+
     data = rows("SELECT id, subject, topic, status FROM topics ORDER BY subject, id")
     if not data:
         st.info("Your syllabus is empty. Add a subject and its topics above.")
         return
- 
+
     left = [d for d in data if d[3] == "Not started"]
     if left:
         with st.expander(f"Reminder: {len(left)} topic(s) not started yet"):
             for _, subj, topic, _ in left:
                 st.write(f"- {subj}: {topic}")
- 
+
     for subj in dict.fromkeys(d[1] for d in data):
         items = [d for d in data if d[1] == subj]
         done = sum(1 for d in items if d[3] == "Done")
@@ -397,12 +437,12 @@ def page_syllabus():
             if new != status:
                 run("UPDATE topics SET status=?, updated=? WHERE id=?", (new, now_text(), tid))
                 if new == "Done":
-                    flash("Topic finished! Great work", "balloons")
+                    flash("Topic finished. Great work")
                 st.rerun()
- 
- 
+
+
 def page_planner():
-    fancy_header("🗓️", "Daily planner and goals", "Small goals, every single day")
+    fancy_header("Daily planner and goals", "Small goals, every single day")
     today = date.today()
     with st.form("goal_form", clear_on_submit=True):
         text = st.text_input("Goal")
@@ -413,7 +453,7 @@ def page_planner():
                 run("INSERT INTO goals(day, text) VALUES(?,?)",
                     ((start + timedelta(days=i)).isoformat(), text.strip()))
             st.success("Goal added")
- 
+
     st.subheader("Today")
     goals = rows("SELECT id, text, done FROM goals WHERE day=? ORDER BY id", (today.isoformat(),))
     if not goals:
@@ -425,15 +465,15 @@ def page_planner():
             if val:
                 left = rows("SELECT 1 FROM goals WHERE day=? AND done=0", (today.isoformat(),))
                 if left:
-                    flash("Goal done ✅")
+                    flash("Goal completed")
                 else:
-                    flash("All goals done today! You are on fire 🔥", "balloons")
+                    flash("All goals for today are complete")
             st.rerun()
     if goals:
         finished = sum(1 for g in goals if g[2])
         st.progress(finished / len(goals))
-        st.caption(f"🦜 {finished} of {len(goals)} goals done today")
- 
+        st.caption(f"{finished} of {len(goals)} goals done today")
+
     st.subheader("Next 7 days")
     nxt = rows(
         "SELECT day, text, done FROM goals WHERE day>? AND day<=? ORDER BY day",
@@ -445,25 +485,25 @@ def page_planner():
         st.dataframe(df, hide_index=True)
     else:
         st.caption("Nothing planned for the next 7 days.")
- 
- 
+
+
 def add_question(subject, qtype, diff, question, options, answer):
     run(
         """INSERT INTO questions(subject, qtype, difficulty, question, options, answer)
            VALUES(?,?,?,?,?,?)""",
         (subject.strip(), qtype, diff, question.strip(), json.dumps(options), str(answer).strip()),
     )
- 
- 
+
+
 def record(qid, subject, question, my_answer, correct_answer, ok):
     run("INSERT INTO attempts(qid, correct, day) VALUES(?,?,?)",
         (qid, int(ok), date.today().isoformat()))
     if ok:
         st.success("Correct!")
-        st.toast("Correct! Keep going", icon="🎉")
+        st.toast("Correct! Keep going", icon=":material/check_circle:")
     else:
         st.error(f"Not correct. Right answer: {correct_answer}")
-        st.toast("Saved in Mistakes. You will beat it next time", icon="💪")
+        st.toast("Saved in Mistakes. You will beat it next time", icon=":material/bookmark:")
         exists = rows("SELECT id FROM mistakes WHERE question=? AND fixed=0", (question,))
         if not exists:
             run(
@@ -472,15 +512,15 @@ def record(qid, subject, question, my_answer, correct_answer, ok):
                 (subject, question, str(my_answer), str(correct_answer), now_text()),
             )
             st.caption("Saved in the Mistakes section.")
- 
- 
+
+
 def num_ok(a, b):
     try:
         return math.isclose(float(a), float(b), rel_tol=1e-2, abs_tol=1e-6)
     except ValueError:
         return False
- 
- 
+
+
 def tab_solve():
     subjects = [r[0] for r in rows("SELECT DISTINCT subject FROM questions ORDER BY subject")]
     if not subjects:
@@ -490,7 +530,7 @@ def tab_solve():
     f_sub = c1.selectbox("Subject", ["All"] + subjects)
     f_diff = c2.selectbox("Difficulty", ["All"] + DIFFS)
     f_type = c3.selectbox("Type", ["All"] + QTYPES)
- 
+
     sql = "SELECT id, subject, qtype, difficulty, question, options, answer FROM questions WHERE 1=1"
     params = []
     for col, val in (("subject", f_sub), ("difficulty", f_diff), ("qtype", f_type)):
@@ -498,11 +538,11 @@ def tab_solve():
             sql += f" AND {col}=?"
             params.append(val)
     items = rows(sql + " ORDER BY id DESC LIMIT 30", tuple(params))
- 
+
     tot = rows("SELECT COUNT(*), COALESCE(SUM(correct),0) FROM attempts")[0]
     if tot[0]:
         st.caption(f"Your accuracy so far: {round(100 * tot[1] / tot[0])}% ({tot[1]}/{tot[0]})")
- 
+
     for qid, subject, qtype, diff, question, options, answer in items:
         with st.expander(f"[{diff}] {subject}: {question[:70]}"):
             st.write(question)
@@ -543,8 +583,8 @@ def tab_solve():
                         record(qid, subject, question, mine, answer, True)
                     if b2.button("I got it wrong", key=f"w_{qid}"):
                         record(qid, subject, question, mine, answer, False)
- 
- 
+
+
 def tab_add_question():
     with st.form("add_q", clear_on_submit=True):
         c1, c2, c3 = st.columns(3)
@@ -570,8 +610,8 @@ def tab_add_question():
             else:
                 add_question(subject, qtype, diff, question, [], answer)
                 st.success("Question saved")
- 
- 
+
+
 def tab_generate():
     st.caption("The AI writes questions and saves them in your question bank. Uses your AI limit.")
     c1, c2 = st.columns(2)
@@ -613,10 +653,10 @@ def tab_generate():
             add_question(subject, qtype, diff, q, opts if qtype == "Objective (MCQ)" else [], ans)
             saved += 1
         st.success(f"{saved} question(s) saved. Open the Solve tab.")
- 
- 
+
+
 def page_practice():
-    fancy_header("🎯", "Practice", "Solve inside the app. Wrong answers are saved for you")
+    fancy_header("Practice", "Solve inside the app. Wrong answers are saved for you")
     t1, t2, t3 = st.tabs(["Solve", "Add question", "AI-generate"])
     with t1:
         tab_solve()
@@ -624,10 +664,10 @@ def page_practice():
         tab_add_question()
     with t3:
         tab_generate()
- 
- 
+
+
 def page_mistakes():
-    fancy_header("🧠", "Mistakes", "Fix your mistakes and you grow faster")
+    fancy_header("Mistakes", "Fix your mistakes and you grow faster")
     st.caption("Wrong answers from Practice are saved here automatically. You can add your own too.")
     with st.form("new_mistake", clear_on_submit=True):
         subject = st.text_input("Subject / topic")
@@ -639,7 +679,7 @@ def page_mistakes():
                    VALUES(?,?,?,?,?)""",
                 (subject.strip(), question.strip(), my_answer, correct, now_text()))
             st.success("Mistake saved")
- 
+
     show = st.radio("Show", ["Still to fix", "Fixed", "All"], horizontal=True)
     sql = "SELECT id,subject,question,my_answer,correct_answer,fixed FROM mistakes"
     if show == "Still to fix":
@@ -655,7 +695,7 @@ def page_mistakes():
             if b1.button("Mark as not fixed" if fixed else "Mark as fixed", key=f"fix_{mid}"):
                 run("UPDATE mistakes SET fixed=? WHERE id=?", (0 if fixed else 1, mid))
                 if not fixed:
-                    flash("Mistake fixed. That is how you improve!", "balloons")
+                    flash("Mistake fixed. That is how you improve")
                 st.rerun()
             if b2.button("Explain with AI", key=f"exp_{mid}"):
                 reply, err = ask_ai(
@@ -665,10 +705,10 @@ def page_mistakes():
                     "You are a patient tutor. Keep it short and clear.",
                 )
                 st.error(err) if err else st.write(reply)
- 
- 
+
+
 def page_notes():
-    fancy_header("📝", "Notes", "Write, search and keep all your notes here")
+    fancy_header("Notes", "Write, search and keep all your notes here")
     with st.form("new_note", clear_on_submit=True):
         subject = st.text_input("Subject")
         title = st.text_input("Title")
@@ -687,20 +727,20 @@ def page_notes():
             if st.button("Delete", key=f"del_note_{nid}"):
                 run("DELETE FROM notes WHERE id=?", (nid,))
                 st.rerun()
- 
- 
+
+
 def page_ai_tutor():
-    fancy_header("🤖", "AI Tutor", "Ask any doubt, get a simple explanation")
+    fancy_header("AI Tutor", "Ask any doubt, get a simple explanation")
     chat_ui(
         "chat_tutor",
         "You are a friendly study tutor for BSc IT and engineering students. Explain with simple "
         "words and a real-life example, keep answers short, then offer one practice question.",
         "Ask any doubt. Uses your daily AI limit.",
     )
- 
- 
+
+
 def page_english():
-    fancy_header("💬", "English Coach", "Chat in English and improve every day")
+    fancy_header("English Coach", "Chat in English and improve every day")
     chat_ui(
         "chat_english",
         "You are a friendly spoken-English coach. Reply in simple English. If the student makes a "
@@ -708,10 +748,10 @@ def page_english():
         "and ask one easy question.",
         "Practice English by chatting. Type like you would speak. (Voice can be added later.)",
     )
- 
- 
+
+
 def page_videos():
-    fancy_header("🎬", "Study Videos", "Only study videos, zero distraction")
+    fancy_header("Study Videos", "Only study videos, zero distraction")
     st.caption("Only the videos you add here show up, so there are no distractions.")
     with st.form("add_video", clear_on_submit=True):
         title = st.text_input("Title")
@@ -727,10 +767,10 @@ def page_videos():
             if st.button("Remove", key=f"del_vid_{vid}"):
                 run("DELETE FROM videos WHERE id=?", (vid,))
                 st.rerun()
- 
- 
+
+
 def page_music():
-    fancy_header("🎵", "Music", "Your own playlist while you study")
+    fancy_header("Music", "Your own playlist while you study")
     with st.form("add_song", clear_on_submit=True):
         title = st.text_input("Song name")
         up = st.file_uploader("Upload a song file", type=["mp3", "wav", "ogg", "m4a"])
@@ -752,10 +792,10 @@ def page_music():
         if st.button("Remove", key=f"del_song_{sid}"):
             run("DELETE FROM songs WHERE id=?", (sid,))
             st.rerun()
- 
- 
+
+
 def page_files():
-    fancy_header("📁", "Files", "All your study files in one place")
+    fancy_header("Files", "All your study files in one place")
     st.caption("Save study photos and files here instead of WhatsApp or random folders.")
     with st.form("add_file", clear_on_submit=True):
         subject = st.text_input("Subject")
@@ -779,10 +819,10 @@ def page_files():
                 p.unlink()
             run("DELETE FROM files WHERE id=?", (fid,))
             st.rerun()
- 
- 
+
+
 def page_calculator():
-    fancy_header("🧮", "Calculator", "Quick calculations without leaving the app")
+    fancy_header("Calculator", "Quick calculations without leaving the app")
     st.caption("Examples: 2*(3+4)**2    sqrt(16)    sin(pi/2)    log10(1000)")
     expr = st.text_input("Expression")
     if expr:
@@ -790,10 +830,10 @@ def page_calculator():
             st.success(f"Answer: {safe_eval(ast.parse(expr, mode='eval'))}")
         except Exception:
             st.error("Could not calculate that. Check the expression.")
- 
- 
+
+
 def page_usage():
-    fancy_header("📊", "Usage Stats", "See where your study time really goes")
+    fancy_header("Usage Stats", "See where your study time really goes")
     with db() as c:
         df = pd.read_sql_query("SELECT day, feature, seconds, opens FROM usage", c)
     if df.empty:
@@ -812,18 +852,19 @@ def page_usage():
         df.sort_values(["day", "feature"], ascending=[False, True])[["day", "feature", "minutes", "opens"]],
         hide_index=True,
     )
- 
- 
+
+
 # ====================== main ======================
 def main():
-    st.set_page_config(page_title="Topper Nest", layout="wide")
+    st.set_page_config(page_title="Topper Nest", layout="wide", initial_sidebar_state="expanded")
+    ensure_theme()
     init_db()
     style()
     st.sidebar.markdown(
-        '<div class="brand">🪺 Topper Nest<small>study smarter, not harder</small></div>',
+        '<div class="brand"><div class="logo"></div><div>Topper Nest<small>your study workspace</small></div></div>',
         unsafe_allow_html=True,
     )
-    page = st.sidebar.radio("Menu", PAGES, format_func=lambda p: f"{ICONS[p]}  {p}")
+    page = st.sidebar.radio("Menu", PAGES, key="menu")
     st.sidebar.divider()
     st.sidebar.text_input("Claude API key (for AI pages)", type="password", key="api_key")
     st.sidebar.number_input("AI messages allowed per day", 1, 500, DEFAULT_DAILY_LIMIT, key="ai_limit")
@@ -836,8 +877,7 @@ def main():
         "Calculator": page_calculator, "Usage Stats": page_usage,
     }[page]()
     show_flash()
- 
- 
+
+
 if __name__ == "__main__":
     main()
- 
